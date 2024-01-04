@@ -1,0 +1,32 @@
+<component name="InspectionProjectProfileManager">
+  <profile version="1.0">
+    <option name="myName" value="Project Default" />
+    <inspection_tool class="Eslint" enabled="true" level="WARNING" enabled_by_default="true" />
+    <inspection_tool class="PyPackageRequirementsInspection" enabled="true" level="WARNING" enabled_by_default="true">
+      <option name="ignoredPackages">
+        <value>
+          <list size="11">
+            <item index="0" class="java.lang.String" itemvalue="nvidia-cudnn-cu11" />
+            <item index="1" class="java.lang.String" itemvalue="torch" />
+            <item index="2" class="java.lang.String" itemvalue="torchvision" />
+            <item index="3" class="java.lang.String" itemvalue="transformers" />
+            <item index="4" class="java.lang.String" itemvalue="huggingface-hub" />
+            <item index="5" class="java.lang.String" itemvalue="accelerate" />
+            <item index="6" class="java.lang.String" itemvalue="datasets" />
+            <item index="7" class="java.lang.String" itemvalue="spacy" />
+            <item index="8" class="java.lang.String" itemvalue="scikit-learn" />
+            <item index="9" class="java.lang.String" itemvalue="tensorboardX" />
+            <item index="10" class="java.lang.String" itemvalue="allennlp" />
+          </list>
+        </value>
+      </option>
+    </inspection_tool>
+    <inspection_tool class="PyUnresolvedReferencesInspection" enabled="true" level="WARNING" enabled_by_default="true">
+      <option name="ignoredIdentifiers">
+        <list>
+          <option value="modeling_t5_copy.__HEAD_MASK_WARNING_MSG" />
+        </list>
+      </option>
+    </inspection_tool>
+  </profile>
+</component>
