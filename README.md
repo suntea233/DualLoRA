@@ -13,7 +13,7 @@ pip install -r requirements.txt
 ```
 
 ### 📚 Dataset
-*MutliWOZ2.1*
+*MutliWOZ*
 ```shell
 python create_data.py
 ```
