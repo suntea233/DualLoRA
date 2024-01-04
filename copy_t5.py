@@ -17,7 +17,7 @@
 Modifications Copyright Ibrahim Taha Aksu, 2023.
 All Rights Reserved.
 """
-from copy_ConP import ControlPrompt
+from PromptLoRA import ControlPrompt
 
 """ PyTorch T5 model."""
 
