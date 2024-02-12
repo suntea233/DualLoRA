@@ -1,10 +1,10 @@
-# PromptLoRA: Zero-Shot Cross-Domain Dialogue State Tracking via Prompted Low-Rank Adaptation
-Code for our Paper "**PromptLoRA**: *Zero-Shot Cross-Domain Dialogue State Tracking via Prompted Low-Rank Adaptation*"
+# DualLoRA: Zero-Shot Cross-Domain Dialogue State Tracking via Dual Low-Rank Adaptations
+Code for our Paper "**DualLoRA**: *Zero-Shot Cross-Domain Dialogue State Tracking via Dual Low-Rank Adaptations*"
 ## 🔥 Run our Code
 
 Create a new environment with python==3.9
 ```shell
-conda create -n promptlora python==3.9
+conda create -n duallora python==3.9
 ```
 
 Install the requirement packages
