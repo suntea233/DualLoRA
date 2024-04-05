@@ -22,7 +22,7 @@ import time
 print(torch.cuda.is_available())
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--ckpt",type=str,default=r"D:\ControlNetForDST\save\models\small")
+    parser.add_argument("--ckpt",type=str,default=r"save\models\small")
     parser.add_argument("--train_batch_size",type=int,default=4)
     parser.add_argument("--worker_number", type=int, default=0, help="CPU num load for Dataloader. For win, choose 0, For Linux, choose other")
     parser.add_argument("--dev_batch_size",type=int,default=4)
@@ -120,7 +120,7 @@ class DST(pl.LightningModule):
 
         self.model = T5ForConditionalGeneration.from_pretrained(self.ckpt,args=args)
 
-        t5_weight = torch.load(r"D:\ControlNetForDST\save\models\small/pytorch_model.bin")
+        t5_weight = torch.load(r"save\models\small/pytorch_model.bin")
         state_dict = {rename_weights(key): value for key, value in t5_weight.items()}
         self.model.load_state_dict(state_dict=state_dict,strict=False)
 
