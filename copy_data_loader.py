@@ -238,6 +238,7 @@ def read_MWOZ(args, path_name, SLOTS, tokenizer, description, dataset=None):
                 slot_temp = SLOTS
                 if dataset == "train" or dataset == "dev":
                     if args["except_domain"] != "none":
+                        slot_desc = [description[slot]['question'] for slot in slot_temp if slot in description]
                         slot_temp = [k for k in SLOTS if args["except_domain"] not in k]
                         slot_values = OrderedDict(
                             [(k, v) for k, v in slot_values.items() if args["except_domain"] not in k])
@@ -319,15 +320,15 @@ def prepare_data(args, tokenizer):
         description = json.load(open("utils/slot_description.json", 'r'))
 
         data_train, _, global_tokens,_ = read_MWOZ(args, path_train, ALL_SLOTS, tokenizer, description, "train")
-        data_dev, _, _,_ = read_MWOZ(args, path_dev, ALL_SLOTS, tokenizer, description, "dev")
-        data_test, ALL_SLOTS, _ ,ALL_DESC = read_MWOZ(args, path_test, ALL_SLOTS, tokenizer, description, "test")
+        data_dev, _, _, Dev_DESC = read_MWOZ(args, path_dev, ALL_SLOTS, tokenizer, description, "dev")
+        data_test, ALL_SLOTS, _ ,Test_DESC = read_MWOZ(args, path_test, ALL_SLOTS, tokenizer, description, "test")
 
     elif args["dataset"] == "sgd":
         path = 'data/dstc8-schema-guided-dialogue'
 
         data_train, global_tokens,_ = read_SGD(args=None, path_name=path, tokenizer=tokenizer, dataset="train")
-        data_dev, _, _ = read_SGD(args=None, path_name=path, tokenizer=tokenizer, dataset="dev")
-        data_test,_, ALL_DESC = read_SGD(args=None, path_name=path, tokenizer=tokenizer, dataset="test")
+        data_dev, _, Dev_DESC = read_SGD(args=None, path_name=path, tokenizer=tokenizer, dataset="dev")
+        data_test,_, Test_DESC = read_SGD(args=None, path_name=path, tokenizer=tokenizer, dataset="test")
 
         ALL_SLOTS = list(get_descriptions(os.path.join(path, "test", "schema.json")).keys())
 
@@ -348,7 +349,7 @@ def prepare_data(args, tokenizer):
     dev_loader = DataLoader(dev_dataset, batch_size=args["dev_batch_size"], shuffle=False,
                             collate_fn=partial(collator, tokenizer=tokenizer), num_workers=num_workers, drop_last=True)
 
-    return train_loader, dev_loader, test_loader, ALL_SLOTS, global_tokens, ALL_DESC
+    return train_loader, dev_loader, test_loader, ALL_SLOTS, global_tokens, Dev_DESC,Test_DESC
 
 
 def adjust_sgd_questions(schema):

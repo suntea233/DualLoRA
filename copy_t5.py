@@ -493,14 +493,14 @@ class T5Attention(nn.Module):
             if key_value_states is None:
                 # self-attn
                 # (batch_size, n_heads, seq_length, dim_per_head)
-                if p_bias is not None:
+                if p_bias is not None or global_prompt is not None:
                     hidden_states = shape(proj_layer(hidden_states, prompt_embed,prompt_embed_mask,hidden_attention_mask,global_prompt,p_bias))
                 else:
                     hidden_states = shape(proj_layer(hidden_states))
             elif past_key_value is None:
                 # cross-attn
                 # (batch_size, n_heads, seq_length, dim_per_head)
-                if p_bias is not None:
+                if p_bias is not None or global_prompt is not None:
                     hidden_states = shape(proj_layer(key_value_states, prompt_embed,prompt_embed_mask,hidden_attention_mask,global_prompt,p_bias))
                 else:
                     hidden_states = shape(proj_layer(key_value_states))
@@ -517,13 +517,15 @@ class T5Attention(nn.Module):
 
         # TODO: add prefix to key and value here. Prefixes should be of size [n_heads,dim_per_head] after addition it should become [n_heads,dim_per_headx2]
         # get query states
-        if p_bias != None:
+        if global_prompt != None:
+            query_states = shape(self.q(hidden_states, prompt_embed,prompt_embed_mask,hidden_attention_mask,global_prompt,p_bias))  # (batch_size, n_heads, seq_length, dim_per_head)
+        elif p_bias != None:
             query_states = shape(self.q(hidden_states, prompt_embed,prompt_embed_mask,hidden_attention_mask,global_prompt,p_bias))  # (batch_size, n_heads, seq_length, dim_per_head)
         else:
             query_states = shape(self.q(hidden_states))  # (batch_size, n_heads, seq_length, dim_per_head)
 
         # get key/value states
-        if p_bias != None:
+        if global_prompt != None or p_bias != None:
             key_states = project(
                 hidden_states, self.k, key_value_states, past_key_value[0] if past_key_value is not None else None
             )
@@ -758,12 +760,15 @@ class T5Block(nn.Module):
         else:
             self_attn_past_key_value, cross_attn_past_key_value = None, None
 
-        if self.is_decoder:
-            enc_dec_p_bias = p_bias[0]
-            cur_p_bias = p_bias[1]
+        if p_bias is not None:
+            if self.is_decoder:
+                enc_dec_p_bias = p_bias[0]
+                cur_p_bias = p_bias[1]
+            else:
+                cur_p_bias = p_bias
         else:
-            cur_p_bias = p_bias
-
+            cur_p_bias = None
+            enc_dec_p_bias = None
 
         self_attention_outputs = self.layer[0](
             hidden_states,
@@ -782,6 +787,7 @@ class T5Block(nn.Module):
             prefix_value=prefix_value,
             p_bias=cur_p_bias,
         )
+
         hidden_states, present_key_value_state = self_attention_outputs[:2]
         attention_outputs = self_attention_outputs[2:]  # Keep self-attention outputs and relative position weights
 
@@ -1167,13 +1173,16 @@ class T5Stack(T5PreTrainedModel):
                 cur_prefix_key = prefix_key[i] if prefix_key is not None else None
                 cur_prefix_value = prefix_value[i] if prefix_value is not None else None
 
-                if self.is_decoder:
-                    enc_dec_p_bias = p_bias[:,self.config.num_layers + 2 * i,:,:]
-                    dec_p_bias = p_bias[:,self.config.num_layers + 2 * i + 1,:,:]
-                    cur_p_bias = (enc_dec_p_bias,dec_p_bias)
+                if p_bias is not None:
+                    if self.is_decoder:
+                        enc_dec_p_bias = p_bias[:,self.config.num_layers + 2 * i,:,:]
+                        dec_p_bias = p_bias[:,self.config.num_layers + 2 * i + 1,:,:]
+                        cur_p_bias = (enc_dec_p_bias,dec_p_bias)
+                    else:
+                        enc_p_bias = p_bias[:,i,:,:]
+                        cur_p_bias = enc_p_bias
                 else:
-                    enc_p_bias = p_bias[:,i,:,:]
-                    cur_p_bias = enc_p_bias
+                    cur_p_bias = None
 
                 layer_outputs = layer_module(
                     hidden_states,

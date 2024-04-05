@@ -22,7 +22,7 @@ import time
 print(torch.cuda.is_available())
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--ckpt",type=str,default="save/models/small")
+    parser.add_argument("--ckpt",type=str,default=r"D:\ControlNetForDST\save\models\small")
     parser.add_argument("--train_batch_size",type=int,default=4)
     parser.add_argument("--worker_number", type=int, default=0, help="CPU num load for Dataloader. For win, choose 0, For Linux, choose other")
     parser.add_argument("--dev_batch_size",type=int,default=4)
@@ -118,9 +118,9 @@ class DST(pl.LightningModule):
         self.tokenizer = AutoTokenizer.from_pretrained(self.ckpt,bos_token="[bos]",eos_token="[eos]",sep_token="[sep]")
 
 
-        self.model = T5ForConditionalGeneration.from_pretrained("save/models/small",args=args)
+        self.model = T5ForConditionalGeneration.from_pretrained(self.ckpt,args=args)
 
-        t5_weight = torch.load("save/models/small/pytorch_model.bin")
+        t5_weight = torch.load(r"D:\ControlNetForDST\save\models\small/pytorch_model.bin")
         state_dict = {rename_weights(key): value for key, value in t5_weight.items()}
         self.model.load_state_dict(state_dict=state_dict,strict=False)
 
@@ -215,7 +215,7 @@ class DST(pl.LightningModule):
 
 
     def on_validation_epoch_start(self) -> None:
-        tokenized_desc = self.tokenizer(self.all_desc,padding=True,return_tensors='pt')
+        tokenized_desc = self.tokenizer(self.dev_desc,padding=True,return_tensors='pt')
         input_ids = tokenized_desc['input_ids']
 
         attention_mask = tokenized_desc['attention_mask']
@@ -264,7 +264,7 @@ class DST(pl.LightningModule):
         encoder_input = batch['fb_encoder_input'].cuda()
         encoder_attn_mask = batch["fb_encoder_attn_mask"].cuda()
 
-        index = [self.all_desc.index(desc) for desc in batch['slot_description']]
+        index = [self.dev_desc.index(desc) for desc in batch['slot_description']]
 
         p_bias = self.p_bias[index].cuda()
 
@@ -281,6 +281,80 @@ class DST(pl.LightningModule):
         # self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
 
         return loss
+
+
+
+    def test_epoch_end(
+        self, outputs: List[Any]
+    ) -> None:
+
+        prefix = "zero-shot"
+        save_path = os.path.join(self.save_path, "results")
+        if not os.path.exists(save_path):
+            os.makedirs(save_path)
+
+        for slot_log in self.slot_logger.values():
+            slot_log[2] = (slot_log[1] / slot_log[0]) if slot_log[0] != 0 else 0
+
+        joint_acc_score, F1_score, turn_acc_score = evaluate_metrics(self.predictions, self.all_slots)
+
+        evaluation_metrics = {"Joint Acc": joint_acc_score, "Turn Acc": turn_acc_score, "Joint F1": F1_score}
+        slot_acc_metrics = {key: value[2] for (key, value) in self.slot_logger.items()}
+        self.wandb_logger.log_metrics(metrics=slot_acc_metrics)
+        self.wandb_logger.log_metrics(metrics=evaluation_metrics)
+
+        now = datetime.now()
+        now = now.strftime("%Y-%m-%d-%H-%M")
+
+
+        with open(os.path.join(save_path, f"{prefix}_result_{now}.json"), 'w') as f:
+            json.dump(evaluation_metrics, f, indent=4)
+
+
+        print(f"{prefix} result:", evaluation_metrics)
+
+        with open(os.path.join(save_path, f"{prefix}_prediction_{now}.json"), 'w') as f:
+            json.dump(self.predictions, f, indent=4)
+
+        self.slot_logger = {slot_name: [0, 0, 0] for slot_name in self.all_slots}
+        self.predictions = {}
+
+        self.log("Joint Acc", joint_acc_score, on_step=False, on_epoch=True, prog_bar=True)
+        # self.log("Joint Acc", joint_acc_score, on_step=True, on_epoch=False, prog_bar=True)
+
+
+    def test_step(self, batch, batch_idx):
+        self.model.eval()
+        dst_outputs = self.generate(batch)
+        value_batch = self.tokenizer.batch_decode(dst_outputs, skip_special_tokens=True)
+
+        for idx, value in enumerate(value_batch):
+            # For some reason the new generation adds a trailing whitespace to each decoded value
+            # This is my naive solution.
+            value = value.strip()
+
+            dial_id = batch["ID"][idx]
+            if dial_id not in self.predictions:
+                self.predictions[dial_id] = {}
+                self.predictions[dial_id]["domain"] = batch["domains"][idx][0]
+                self.predictions[dial_id]["turns"] = {}
+            if batch["turn_id"][idx] not in self.predictions[dial_id]["turns"]:
+                self.predictions[dial_id]["turns"][batch["turn_id"][idx]] = {"turn_belief": batch["turn_belief"][idx],
+                                                                        "pred_belief": []}
+
+            if self.args.dataset == "sgd":
+                pred_slot = str(batch["domain"][idx]) + '-' + str(batch["slot_text"][idx])
+            else:
+                pred_slot = str(batch["slot_text"][idx])
+
+            if value != "none":
+                self.predictions[dial_id]["turns"][batch["turn_id"][idx]]["pred_belief"].append(pred_slot + '-' + str(value))
+
+            # analyze slot acc:
+            if str(value) == str(batch["value_text"][idx]):
+                self.slot_logger[pred_slot][1] += 1  # hit
+            self.slot_logger[pred_slot][0] += 1  # total
+
 
 
     def optimizer_step(
@@ -322,7 +396,6 @@ class DST(pl.LightningModule):
             else:
                 # update params
                 optimizer.step(closure=optimizer_closure)
-
 
 
     def generate(self,batch):
@@ -397,11 +470,13 @@ def train(args):
 
     save_args(args,save_path)
 
-    train_loader, val_loader, test_loader, all_slots, global_prompts,all_desc = prepare_data(args, model.tokenizer)
+    train_loader, val_loader, test_loader, all_slots, global_prompts,dev_desc,test_desc = prepare_data(args, model.tokenizer)
 
     model.common_tokens = global_prompts
     model.all_slots = all_slots
-    model.all_desc = all_desc
+    # model.all_desc = all_desc
+    model.dev_desc = dev_desc
+    model.test_desc = test_desc
 
     model.slot_logger = {slot_name: [0, 0, 0] for slot_name in all_slots}
     model.predictions = {}
@@ -437,83 +512,12 @@ def train(args):
                     gpus=1,
                     val_check_interval = 1.0,
                     # num_sanity_val_steps=1,
+
                     )
 
     trainer.fit(model, train_loader, val_loader)
+    trainer.test(model,test_loader)
 
-
-
-def evaluate_model(args, task, tokenizer, model, test_loader, save_path, ALL_SLOTS, wandb_logger, prefix="zeroshot", ):
-    device = torch.device("cuda:{}".format(args.gpu_id))
-    task.model.to(device)
-    task.model.eval()
-    task.to(device)
-    task.eval()
-    save_path = os.path.join(save_path, "results")
-    if not os.path.exists(save_path):
-        os.makedirs(save_path)
-    predictions = {}
-
-
-    slot_logger = {slot_name: [0, 0, 0] for slot_name in ALL_SLOTS}
-
-    for batch in tqdm(test_loader):
-        task.model.eval()
-        dst_outputs = task.generate(batch)
-
-        value_batch = tokenizer.batch_decode(dst_outputs, skip_special_tokens=True)
-
-        for idx, value in enumerate(value_batch):
-            # For some reason the new generation adds a trailing whitespace to each decoded value
-            # This is my naive solution.
-            value = value.strip()
-
-            dial_id = batch["ID"][idx]
-            if dial_id not in predictions:
-                predictions[dial_id] = {}
-                predictions[dial_id]["domain"] = batch["domains"][idx][0]
-                predictions[dial_id]["turns"] = {}
-            if batch["turn_id"][idx] not in predictions[dial_id]["turns"]:
-                predictions[dial_id]["turns"][batch["turn_id"][idx]] = {"turn_belief": batch["turn_belief"][idx],
-                                                                        "pred_belief": []}
-
-            if args.dataset == "sgd":
-                pred_slot = str(batch["domain"][idx]) + '-' + str(batch["slot_text"][idx])
-            else:
-                pred_slot = str(batch["slot_text"][idx])
-
-            if value != "none":
-                predictions[dial_id]["turns"][batch["turn_id"][idx]]["pred_belief"].append(pred_slot + '-' + str(value))
-
-            # analyze slot acc:
-            if str(value) == str(batch["value_text"][idx]):
-                slot_logger[pred_slot][1] += 1  # hit
-            slot_logger[pred_slot][0] += 1  # total
-
-    for slot_log in slot_logger.values():
-        slot_log[2] = (slot_log[1] / slot_log[0]) if slot_log[0] != 0 else 0
-
-    with open(os.path.join(save_path, f"{prefix}_slot_acc.json"), 'w') as f:
-        json.dump(slot_logger, f, indent=4)
-
-    with open(os.path.join(save_path, f"{prefix}_prediction.json"), 'w') as f:
-        json.dump(predictions, f, indent=4)
-
-    joint_acc_score, F1_score, turn_acc_score = evaluate_metrics(predictions, ALL_SLOTS)
-
-    evaluation_metrics = {"Joint Acc": joint_acc_score, "Turn Acc": turn_acc_score, "Joint F1": F1_score}
-    slot_acc_metrics = {key: value[2] for (key, value) in slot_logger.items()}
-    wandb_logger.log_metrics(metrics=slot_acc_metrics)
-    wandb_logger.log_metrics(metrics=evaluation_metrics)
-
-
-
-    print(f"{prefix} result:", evaluation_metrics)
-
-    with open(os.path.join(save_path, f"{prefix}_result.json"), 'w') as f:
-        json.dump(evaluation_metrics, f, indent=4)
-
-    return predictions
 
 
 def save_args(args,save_path):
@@ -523,6 +527,7 @@ def save_args(args,save_path):
         for eachArg, value in argsDict.items():
             f.writelines(eachArg + ' : ' + str(value) + '\n')
         f.writelines('------------------- end -------------------')
+
 
 
 def main():
