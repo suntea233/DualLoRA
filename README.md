@@ -15,7 +15,7 @@ pip install -r requirements.txt
 ### 📚 Dataset
 *MutliWOZ*
 ```shell
-python create_mutiwoz_2_1.py
+python create_mwoz_2_1.py
 ```
 use create_data_2_1.py if want to run with multiwoz2.1
 
