@@ -533,7 +533,6 @@ def save_args(args,save_path):
 def main():
     args = parse_args()
 
-    # os.environ["WANDB_API_KEY"] = 'c361e8e3b3e099d691e5fdb3e0049ba44fe75057'
     os.environ['WANDB_MODE'] = args.wandb_mode
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu_id)
 
