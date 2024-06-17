@@ -5,6 +5,7 @@ from loralib import LoRALayer
 from torch import Tensor
 import torch.nn.functional as F
 
+
 class ConLoRALinear(nn.Linear, LoRALayer):
     def __init__(
         self,
@@ -71,20 +72,32 @@ class ConLoRALinear(nn.Linear, LoRALayer):
 
         if self.r > 0 and not self.merged:
             result = F.linear(x, T(self.weight), bias=self.bias)
-            result = result + (self.lora_dropout(x) @ self.lora_A.transpose(0, 1) @ self.lora_B.transpose(0, 1)) * self.scaling
-            glora_result = (self.lora_dropout(global_prompt) @ self.lora_con_A.transpose(0, 1) @ self.lora_con_B.transpose(0,1)) * self.scaling
-            result = result + 0.5 * glora_result.mean(dim=1).unsqueeze(dim=1)
+            if global_prompt is not None:
+                result = result + (self.lora_dropout(x) @ self.lora_A.transpose(0, 1) @ self.lora_B.transpose(0, 1)) * self.scaling
+                glora_result = (self.lora_dropout(global_prompt) @ self.lora_con_A.transpose(0, 1) @ self.lora_con_B.transpose(0,1)) * self.scaling
+                result = result + 0.5 * glora_result.mean(dim=1).unsqueeze(dim=1)
+
+            else:
+                result = result + (self.lora_dropout(x) @ self.lora_A.transpose(0, 1) @ self.lora_B.transpose(0, 1)) * self.scaling
+
             return result
         else:
+            # glora_result = (self.lora_dropout(global_prompt) @ self.lora_con_A.transpose(0,1) @ self.lora_con_B.transpose(0, 1)) * self.scaling
+            # if torch.equal(p_bias,0.5*glora_result) == False:
+            #     print(1)
+
             result = F.linear(x, T(self.weight), bias=self.bias)
             result = result + p_bias.mean(dim=1).unsqueeze(dim=1)
             return result
 
+
+
+
 class ControlPrompt(nn.Module):
     def __init__(self,in_proj,out_proj,lora_r,lora_alpha,lora_dropout,bias,args):
         super().__init__()
-        self.lora = ConLoRALinear(in_proj, out_proj, lora_r, lora_alpha, lora_dropout=lora_dropout, bias=bias)
+        self.Con = ConLoRALinear(in_proj, out_proj, lora_r, lora_alpha, lora_dropout=lora_dropout, bias=bias)
 
     def forward(self,x,prompt_emb=None,prompt_embed_mask=None,hidden_attention_mask=None,global_prompt=None,p_bias=None):
-        hidden_state = self.lora(x,prompt_emb,prompt_embed_mask,hidden_attention_mask,global_prompt,p_bias)
+        hidden_state = self.Con(x,prompt_emb,prompt_embed_mask,hidden_attention_mask,global_prompt,p_bias)
         return hidden_state

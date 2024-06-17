@@ -157,6 +157,8 @@ class DST(pl.LightningModule):
         self.train_bs = args.train_batch_size
 
         self.add_reparameterization = args.add_reparameterization
+        self.scaling = self.args.lora_alpha / self.args.lora_r
+
 
     def init_global_prompt(self):
         assert not self.global_prompts_set
@@ -214,6 +216,8 @@ class DST(pl.LightningModule):
         return loss
 
 
+
+
     def on_validation_epoch_start(self) -> None:
         tokenized_desc = self.tokenizer(self.dev_desc,padding=True,return_tensors='pt')
         input_ids = tokenized_desc['input_ids']
@@ -253,32 +257,69 @@ class DST(pl.LightningModule):
         p_bias = []
 
         for i in range(len(lora_con_A)):
-            p_result = (global_prompt @ lora_con_A[i].transpose(0, 1) @ lora_con_B[i].transpose(0,1))
+            p_result = (global_prompt @ lora_con_A[i].transpose(0, 1) @ lora_con_B[i].transpose(0,1)) * self.scaling * 0.5
             p_bias.append(p_result.tolist())
 
         self.p_bias = torch.tensor(p_bias).transpose(0,1)
 
 
     def validation_step(self, batch, batch_idx):
+        # self.model.eval()
+        # encoder_input = batch['fb_encoder_input'].cuda()
+        # encoder_attn_mask = batch["fb_encoder_attn_mask"].cuda()
+        #
+        # index = [self.dev_desc.index(desc) for desc in batch['slot_description']]
+        #
+        # p_bias = self.p_bias[index].cuda()
+        #
+        # model_output = self.model(
+        #     input_ids=encoder_input,
+        #     attention_mask=encoder_attn_mask,
+        #     labels=batch['decoder_output'],
+        #     p_bias=p_bias,
+        # )
+
+
         self.model.eval()
         encoder_input = batch['fb_encoder_input'].cuda()
         encoder_attn_mask = batch["fb_encoder_attn_mask"].cuda()
+
+        prompt_embed = self.model.shared(batch["slot_desc_input"].cuda())
+        prompt_embed_mask = batch['slot_desc_attn_mask'].cuda()
+        # eos_token_id = self.tokenizer.eos_token_id
+        #
+        # batch_size = encoder_input.shape[0]
+        # expanded_prompt = torch.unsqueeze(self.final_global_prompt, 1).expand(-1, batch_size, -1)
+        # expanded_prompt = expanded_prompt.transpose(0,1)
+        #
+        # query = self.g_q(expanded_prompt.cuda())
+        # key = self.g_k(prompt_embed)
+        # value = self.g_v(prompt_embed)
+        #
+        # attention_out = self.cross_attn(query=query,key=key,value=value,key_padding_mask=~prompt_embed_mask.to(bool))
+        #
+        # attended_prompt = self.g_o(attention_out[0])
 
         index = [self.dev_desc.index(desc) for desc in batch['slot_description']]
 
         p_bias = self.p_bias[index].cuda()
 
+
         model_output = self.model(
             input_ids=encoder_input,
             attention_mask=encoder_attn_mask,
             labels=batch['decoder_output'],
-            p_bias=p_bias,
+            prompt_embed=prompt_embed,
+            prompt_embed_mask=prompt_embed_mask,
+            hidden_attention_mask=encoder_attn_mask,
+            # global_prompt=attended_prompt,
+            p_bias=p_bias
         )
 
         loss = model_output['loss']
 
         self.log("val_loss", loss, on_step=True, on_epoch=False, prog_bar=True)
-        # self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
+        self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
 
         return loss
 
@@ -323,10 +364,62 @@ class DST(pl.LightningModule):
         # self.log("Joint Acc", joint_acc_score, on_step=True, on_epoch=False, prog_bar=True)
 
 
+    def on_test_epoch_start(self) -> None:
+        tokenized_desc = self.tokenizer(self.test_desc,padding=True,return_tensors='pt')
+        input_ids = tokenized_desc['input_ids']
+
+        attention_mask = tokenized_desc['attention_mask']
+
+        prompt_embed = self.model.shared(input_ids.cuda())
+        prompt_embed_mask = attention_mask.cuda()
+        eos_token_id = self.tokenizer.eos_token_id
+
+        batch_size = prompt_embed.size(0)
+
+        expanded_prompt = torch.unsqueeze(self.final_global_prompt, 1).expand(-1, batch_size, -1)
+        expanded_prompt = expanded_prompt.transpose(0,1)
+
+        query = self.g_q(expanded_prompt.cuda())
+        key = self.g_k(prompt_embed)
+        value = self.g_v(prompt_embed)
+
+        attention_out = self.cross_attn(query=query,key=key,value=value,key_padding_mask=~prompt_embed_mask.to(bool))
+
+        global_prompt = self.g_o(attention_out[0])
+
+        named_state_dict = self.model.named_parameters()
+
+        lora_con_A = []
+        lora_con_B = []
+
+
+        for name,param in named_state_dict:
+            if "lora_con_A" in name:
+                lora_con_A.append(param)
+            if "lora_con_B" in name:
+                lora_con_B.append(param)
+
+        # global_prompt @ self.lora_con_A.transpose(0, 1) @ self.lora_con_B.transpose(0, 1)
+        p_bias = []
+
+        for i in range(len(lora_con_A)):
+            p_result = (global_prompt @ lora_con_A[i].transpose(0, 1) @ lora_con_B[i].transpose(0,1))
+            p_bias.append(p_result.tolist())
+
+        self.p_bias = torch.tensor(p_bias).transpose(0,1)
+
+
+
     def test_step(self, batch, batch_idx):
+
         self.model.eval()
+
+
         dst_outputs = self.generate(batch)
         value_batch = self.tokenizer.batch_decode(dst_outputs, skip_special_tokens=True)
+
+
+
 
         for idx, value in enumerate(value_batch):
             # For some reason the new generation adds a trailing whitespace to each decoded value
@@ -407,17 +500,23 @@ class DST(pl.LightningModule):
         prompt_embed_mask = batch['slot_desc_attn_mask'].cuda()
         eos_token_id = self.tokenizer.eos_token_id
 
-        batch_size = encoder_input.shape[0]
-        expanded_prompt = torch.unsqueeze(self.final_global_prompt, 1).expand(-1, batch_size, -1)
-        expanded_prompt = expanded_prompt.transpose(0,1)
 
-        query = self.g_q(expanded_prompt.cuda())
-        key = self.g_k(prompt_embed)
-        value = self.g_v(prompt_embed)
+        index = [self.test_desc.index(desc) for desc in batch['slot_description']]
 
-        attention_out = self.cross_attn(query=query,key=key,value=value,key_padding_mask=~prompt_embed_mask.to(bool))
+        p_bias = self.p_bias[index].cuda()
 
-        attended_prompt = self.g_o(attention_out[0])
+
+        # batch_size = encoder_input.shape[0]
+        # expanded_prompt = torch.unsqueeze(self.final_global_prompt, 1).expand(-1, batch_size, -1)
+        # expanded_prompt = expanded_prompt.transpose(0,1)
+        #
+        # query = self.g_q(expanded_prompt.cuda())
+        # key = self.g_k(prompt_embed)
+        # value = self.g_v(prompt_embed)
+        #
+        # attention_out = self.cross_attn(query=query,key=key,value=value,key_padding_mask=~prompt_embed_mask.to(bool))
+        #
+        # attended_prompt = self.g_o(attention_out[0])
 
 
         dst_output = self.model.generate(
@@ -427,7 +526,8 @@ class DST(pl.LightningModule):
             prompt_embed=prompt_embed,
             prompt_embed_mask=prompt_embed_mask,
             hidden_attention_mask=encoder_attn_mask,
-            global_prompt=attended_prompt,
+            p_bias=p_bias,
+            # global_prompt=attended_prompt,
             max_length=40,
             # num_beams=5,
             # early_stopping=True,
@@ -481,8 +581,8 @@ def train(args):
     model.slot_logger = {slot_name: [0, 0, 0] for slot_name in all_slots}
     model.predictions = {}
 
-    checkpoint_callback = ModelCheckpoint(filepath= save_path+"/{epoch}-{global_step}-{Joint Acc:.3f}",
-                                          monitor='Joint Acc',
+    checkpoint_callback = ModelCheckpoint(filepath= save_path+"/{epoch}-{global_step}-{val_loss:.2f}",
+                                          monitor='val_loss',
                                           verbose = False,
                                           save_last= True,
                                           save_top_k = 1,
@@ -492,7 +592,7 @@ def train(args):
 
     callbacks = []
     if not args.no_early_stop:
-        callbacks= [pl.callbacks.EarlyStopping(monitor='Joint Acc',
+        callbacks= [pl.callbacks.EarlyStopping(monitor='val_loss',
                                                min_delta=args.min_delta,
                                                patience=args.patience,
                                                verbose=False,
@@ -510,7 +610,7 @@ def train(args):
                     #precision=16,
                     logger = wandb_logger,
                     gpus=1,
-                    val_check_interval = 1.0,
+                    val_check_interval = 0.1,
                     # num_sanity_val_steps=1,
 
                     )
