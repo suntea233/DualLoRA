@@ -98,8 +98,8 @@ def read_SGD(args, path_name, tokenizer, dataset=None):
                 data = json.load(f)
                 all_data += data
     global_tokens = []
-    # if dataset == "train":
-        # global_tokens = find_global_tokens_SGD(all_data)
+    if dataset == "train":
+        global_tokens = find_global_tokens_SGD(all_data)
 
     with open(os.path.join(path_name, dataset, "schema.json")) as f:
         data = json.load(f)
